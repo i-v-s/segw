@@ -68,6 +68,14 @@ target/
 # IPython Notebook
 .ipynb_checkpoints
 
+.idea/
+input/
+output/
+krita/
+models/
+*.kra
+*~
+
 # pyenv
 .python-version
 
