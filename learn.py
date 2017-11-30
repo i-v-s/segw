@@ -4,21 +4,22 @@ from skimage.transform import resize
 from matplotlib import pyplot as plt
 from keras import models
 from keras.optimizers import SGD
-from keras.callbacks import ModelCheckpoint
+from keras.callbacks import ModelCheckpoint, TensorBoard
 from threading import Thread
 from generator import train_generator
+import imageio
 
-modelName = 'three'
-width = 512 #640
-height = 512 #480
+modelName = '20'
+width = 256
+height = 256 #480
 
-input_samples = np.array(list(map(lambda n: imread('input/' + n), ['data/lep1.jpg', 'data/lep2_s.png', 'data/lep4_s.png', 'data/wi3.png']))) / 255.0
+input_samples = np.array(list(map(lambda n: imread('input/' + n)[: 448, : 512, :], ['data/lep1.jpg', 'data/lep2_s.png', 'data/lep4_s.png', 'data/wi3.png']))) / 255.0
 
 
 def load_model(model_name):
     with open('models/' + modelName + '.json') as model_file:
         model = models.model_from_json(model_file.read())
-    optimizer = SGD(lr=0.001, momentum=0.9, decay=0.0005, nesterov=False)
+    optimizer = SGD(lr=0.00005, momentum=0.5, decay=0.0005, nesterov=False)
     model.compile(loss="categorical_crossentropy", optimizer=optimizer, metrics=['accuracy'])
     print('Compiled: OK')
     try:
@@ -42,19 +43,20 @@ def handle_close():
 
 
 def prep_plot():
-    ims = []
-    fig = plt.figure()
-    fig.canvas.mpl_connect('close_event', handle_close)
-    p = 0
-    for n in range(0, 4):
-        a1 = fig.add_subplot(221 + p)
-        a1.axis('off')
-        ims.append(a1.imshow(np.zeros((height, width))))
-        p += 1
-
+    #ims = []
+    #fig = plt.figure()
+    #fig.canvas.mpl_connect('close_event', handle_close)
+    #p = 0
+    #for n in range(0, 4):
+    #    a1 = fig.add_subplot(221 + p)
+    #    a1.axis('off')
+    #    ims.append(a1.imshow(np.zeros((height, width))))
+    #    p += 1
+    plt.axis('off')
+    im = plt.imshow(np.zeros((height * 2, width * 2)))
     plt.ion()
     plt.show()
-    return ims
+    return im
 
 
 def calc_sample_results(model):
@@ -74,6 +76,14 @@ def train(model_name):
     check_pointer = ModelCheckpoint(
         filepath='models/' + modelName + '.hdf5',
         verbose=1, save_best_only=True, monitor='loss')
+    tensor_board = TensorBoard(
+        log_dir='models/' + modelName + '/',
+        #write_images=True,
+        #write_grads=True,
+        #write_graph=True,
+        #histogram_freq=1
+    )
+    tensor_board.validation_data = input_samples
     #check_pointer.
     epoch = 0
     epochs = 5
@@ -82,25 +92,41 @@ def train(model_name):
         if not running:
             break
         calc_sample_results(model)
-        model.fit(i, o, epochs=epoch + epochs, initial_epoch=epoch, callbacks=[check_pointer], batch_size=4)
+        model.fit(
+            i, o,
+            epochs=epoch + epochs, initial_epoch=epoch,
+            callbacks=[check_pointer, tensor_board],
+            batch_size=4)
         #model.fit_generator(
         #    train_gen, steps_per_epoch=30,
         #    epochs=epoch + epochs, initial_epoch=epoch, callbacks=[check_pointer])
         epoch += epochs
 
 
-ims = prep_plot()
+im = prep_plot()
 
 try:
     thread = Thread(target=train, args=(modelName,))
     thread.start()
-    while True:
-        if changed:
-            for n in range(0, 4):
-                ims[n].set_data(sample_results[n])
-            plt.draw()
-            changed = False
-        plt.pause(1)
+    start = True
+    with imageio.get_writer('d:/video/gif/segw.gif', mode='I', fps=5) as writer:
+        while True:
+            if changed:
+                i1 = np.hstack((sample_results[0], sample_results[1]))
+                i2 = np.hstack((sample_results[2], sample_results[3]))
+                image = np.vstack((i1, i2))[:, :, :3]
+
+                im.set_data(image)
+                if start:
+                    writer.append_data(np.zeros(image.shape))
+                    start = False
+
+                writer.append_data(image)
+                #for n in range(0, 4):
+                #    ims[n].set_data(sample_results[n])
+                plt.draw()
+                changed = False
+            plt.pause(1)
 except KeyboardInterrupt:
     print("Terminating...")
     running = False
