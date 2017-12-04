@@ -4,55 +4,64 @@ import json
 from keras.utils import plot_model
 
 name = 'boe'
-base = 8
+base = 16
 
 # Input
 inputs = Input(shape=(None, None, 3))
 l0 = Dropout(0.1)(inputs)
 
 # Convolution
-l1 = Conv2D(base, 3, padding='same', activation='relu')(l0)
-l1 = Conv2D(base, 3, padding='same', activation='relu')(l1)
+conv1 = Conv2D(base, 3, padding='same', activation='relu')(l0)
+conv1 = Conv2D(base, 3, padding='same', activation='relu')(conv1)
 
-l2 = MaxPooling2D()(l1)
-l2 = Conv2D(base * 2, 3, padding='same', activation='relu')(l2)
-l2 = Conv2D(base * 2, 3, padding='same', activation='relu')(l2)
+conv2 = MaxPooling2D()(conv1)
+conv2 = Conv2D(base * 2, 3, padding='same', activation='relu')(conv2)
+conv2 = Conv2D(base * 2, 3, padding='same', activation='relu')(conv2)
 
-l3 = MaxPooling2D()(l2)
-l3 = Conv2D(base * 4, 3, padding='same', activation='relu')(l3)
-l3 = Conv2D(base * 4, 3, padding='same', activation='relu')(l3)
+conv3 = MaxPooling2D()(conv2)
+conv3 = Conv2D(base * 4, 3, padding='same', activation='relu')(conv3)
+conv3 = Conv2D(base * 4, 3, padding='same', activation='relu')(conv3)
 
-l4 = MaxPooling2D()(l3)
-l4 = Conv2D(base * 8, 3, padding='same', activation='relu')(l4)
-l4 = Conv2D(base * 8, 3, padding='same', activation='relu')(l4)
+conv4 = MaxPooling2D()(conv3)
+conv4 = Conv2D(base * 8, 3, padding='same', activation='relu')(conv4)
+conv4 = Conv2D(base * 8, 3, padding='same', activation='relu')(conv4)
 
-l5 = MaxPooling2D()(l4)
-l5 = Conv2D(base * 16, 3, padding='same', activation='relu')(l5)
-l5 = Conv2D(base * 16, 3, padding='same', activation='relu')(l5)
+conv5 = MaxPooling2D()(conv4)
+conv5 = Conv2D(base * 16, 3, padding='same', activation='relu')(conv5)
+conv5 = Conv2D(base * 16, 3, padding='same', activation='relu')(conv5)
+
+conv6 = MaxPooling2D()(conv5)
+conv6 = Conv2D(base * 32, 3, padding='same', activation='relu')(conv6)
+conv6 = Conv2D(base * 32, 3, padding='same', activation='relu')(conv6)
 
 # Deconvolution
-l6 = UpSampling2D()(l5)
-l6 = concatenate([l6, l4], axis=3)
-l6 = Conv2D(base * 8, 3, padding='same', activation='relu')(l6)
-l6 = Conv2D(base * 8, 3, padding='same', activation='relu')(l6)
+dec5 = UpSampling2D()(conv6)
+dec5 = concatenate([dec5, conv5], axis=3)
+dec5 = Conv2D(base * 16, 3, padding='same', activation='relu')(dec5)
+dec5 = Conv2D(base * 16, 3, padding='same', activation='relu')(dec5)
 
-l7 = UpSampling2D()(l6)
-l7 = concatenate([l7, l3], axis=3)
-l7 = Conv2D(base * 4, 3, padding='same', activation='relu')(l7)
-l7 = Conv2D(base * 4, 3, padding='same', activation='relu')(l7)
+dec4 = UpSampling2D()(conv5)
+dec4 = concatenate([dec4, conv4], axis=3)
+dec4 = Conv2D(base * 8, 3, padding='same', activation='relu')(dec4)
+dec4 = Conv2D(base * 8, 3, padding='same', activation='relu')(dec4)
 
-l8 = UpSampling2D()(l7)
-l8 = concatenate([l8, l2], axis=3)
-l8 = Conv2D(base * 2, 3, padding='same', activation='relu')(l8)
-l8 = Conv2D(base * 2, 3, padding='same', activation='relu')(l8)
+dec3 = UpSampling2D()(dec4)
+dec3 = concatenate([dec3, conv3], axis=3)
+dec3 = Conv2D(base * 4, 3, padding='same', activation='relu')(dec3)
+dec3 = Conv2D(base * 4, 3, padding='same', activation='relu')(dec3)
 
-l9 = UpSampling2D()(l8)
-l9 = concatenate([l9, l1], axis=3)
-l9 = Conv2D(base, 3, padding='same', activation='relu')(l9)
-l9 = Conv2D(base, 3, padding='same', activation='relu')(l9)
+dec2 = UpSampling2D()(dec3)
+dec2 = concatenate([dec2, conv2], axis=3)
+dec2 = Conv2D(base * 2, 3, padding='same', activation='relu')(dec2)
+dec2 = Conv2D(base * 2, 3, padding='same', activation='relu')(dec2)
+
+dec1 = UpSampling2D()(dec2)
+dec1 = concatenate([dec1, conv1], axis=3)
+dec1 = Conv2D(base, 3, padding='same', activation='relu')(dec1)
+dec1 = Conv2D(base, 3, padding='same', activation='relu')(dec1)
 
 # Output
-outputs = Conv2D(4, 3, padding='same', activation='softmax')(l9)
+outputs = Conv2D(4, 3, padding='same', activation='softmax')(dec1)
 
 model = models.Model(inputs=inputs, outputs=outputs)
 model.summary()
