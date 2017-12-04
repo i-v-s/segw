@@ -10,16 +10,16 @@ def build_model(base=16, conv_depth=2, deconv_depth=2, depth=6, max_filters=128)
     b = base
     convolutions = []
     for n in range(depth):
-        convolution = MaxPooling2D()(convolution) if n > 0 else input_layer
+        convolution = MaxPooling2D(name='max2d' + '_' + str(n))(convolution) if n > 0 else input_layer
         for c in range(conv_depth):
-            convolution = Conv2D(min(b, max_filters), 3, padding='same', activation='relu')(convolution)
+            convolution = Conv2D(min(b, max_filters), 3, padding='same', activation='relu', name='conv2d' + '_' + str(n) + '_' + str(c))(convolution)
         convolutions.append(convolution)
         b *= 2
     b /= 2
     deconvolution = convolution
-    for n in range(depth - 1, -1, -1):
+    for n in range(depth - 2, -1, -1):
         b = int(b / 2)
-        deconvolution = UpSampling2D()(deconvolution)
+        deconvolution = UpSampling2D(name='up2d' + '_' + str(n))(deconvolution)
         deconvolution = concatenate([deconvolution, convolutions[n]], axis=3)
         for c in range(deconv_depth):
             deconvolution = Conv2D(min(b, max_filters), 3, padding='same', activation='relu')(deconvolution)
