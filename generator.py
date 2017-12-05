@@ -1,22 +1,24 @@
 import numpy as np
+import sys
 from math import sin, cos, pi
 from os import listdir
 from skimage.io import imread
 import random
-from queue import Queue, Full
+from queue import Queue
 from threading import Thread
 from scipy.ndimage.interpolation import rotate
+from pympler import summary, muppy
 
 
-def train_generator(out_channels, classes, size, batch=None):
+def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
 
-    def load_classes(dir):
+    def load_classes(folder, class_list):
         fns = []
-        for c in classes:
-            fns += [c + '/' + f for f in listdir(dir + c) if f.endswith('.png') or f.endswith('.jpg') or f.endswith('.jpeg')]
+        for c in class_list:
+            fns += [c + '/' + f for f in listdir(folder + c) if f.endswith('.png') or f.endswith('.jpg') or f.endswith('.jpeg')]
 
         def load(fn):
-            img = imread(dir + fn) / 255.0
+            img = imread(folder + fn) / 255.0
             assert img.shape[0] > size[0] and img.shape[1] > size[1]
             return img
         return list(map(load, fns))
@@ -56,92 +58,64 @@ def train_generator(out_channels, classes, size, batch=None):
         img[img < 0.0] = 0.0
         return img
 
-    def generate_loop(q):
-        inputs = load_classes('input/')
-        outputs = list(map(prep_out, load_classes('output/')))
-        random.seed(1)
-        area = size[0] * size[1]
-        while True:
-            results = []
-            metrics = []
-            msum = np.ones(out_channels)
-            for a in range(3):
-                n = random.randint(0, len(inputs) - 1)
-                i = inputs[n]
-                o = outputs[n]
-                i_shape = i.shape
-                a = -50 + 100.0 * random.random()
-                while not test_angle(a, i_shape, size):
-                    a *= 0.5
-                i = rotate_f(i, a)
-                o = rotate_f(o, a)
-                count = int(i_shape[0] * i_shape[1] / area * 3)
-                for p in gen_pos(a, i_shape, size, count):
-                    x, y = p[1], p[0]
-                    ip = i[y:y + size[0], x:x + size[1], :]
-                    op = o[y:y + size[0], x:x + size[1], :]
-                    m = np.sum(op, axis=(0, 1))
-                    msum += m
-                    metrics.append((len(results), m))
-                    results.append((ip, op))
-            metrics = sorted(metrics, key=lambda m: -np.sum((m[1] / msum)[:out_channels - 1]))
-            metrics = metrics[: int(len(metrics) / 2)]
-            random.shuffle(metrics)
-            for a in metrics:
-                q.put(results[a[0]])
+    def generate_loop(q, dump_mem):
+        try:
+            class_tuple = classes if isinstance(classes, tuple) else (classes, classes)
+            inputs = load_classes('input/', class_tuple[0])
+            outputs = list(map(prep_out, load_classes('output/', class_tuple[1])))
+            random.seed(1)
+            area = size[0] * size[1]
+            while True:
+                results = []
+                metrics = []
+                msum = np.ones(out_channels)
+                for a in range(3):
+                    n = random.randint(0, len(inputs) - 1)
+                    i = inputs[n]
+                    o = outputs[n]
+                    i_shape = i.shape
+                    a = -50 + 100.0 * random.random()
+                    while not test_angle(a, i_shape, size):
+                        a *= 0.5
+                    i = rotate_f(i, a)
+                    o = rotate_f(o, a)
+                    count = int(i_shape[0] * i_shape[1] / area * 3)
+                    for p in gen_pos(a, i_shape, size, count):
+                        x, y = p[1], p[0]
+                        ip = i[y:y + size[0], x:x + size[1], :]
+                        op = o[y:y + size[0], x:x + size[1], :]
+                        if random.randint(0, 10) > 5:
+                            ip = np.flip(ip, 1)
+                            op = np.flip(op, 1)
+                        m = np.sum(op, axis=(0, 1))
+                        msum += m
+                        metrics.append((len(results), m))
+                        results.append((ip, op))
+                metrics = sorted(metrics, key=lambda m: -np.sum((m[1] / msum)[:out_channels - 1]))
+                metrics = metrics[: int(len(metrics) / 2)]
+                random.shuffle(metrics)
+                for a in metrics:
+                    q.put(results[a[0]])
+
+                if dump_mem:
+                    summary.print_(summary.summarize(muppy.get_objects()))
+        except MemoryError:
+            sys.exit(2)
 
     queue = Queue(maxsize=50)
-    thread = Thread(target=generate_loop, args=(queue,))
+    thread = Thread(target=generate_loop, args=(queue, dump_mem))
     thread.start()
 
-    while True:
-        if batch is None:
-            yield queue.get()
-        else:
-            ia, oa = [], []
-            for b in range(batch):
-                (i, o) = queue.get()
-                ia.append(i)
-                oa.append(o)
-            yield (np.array(ia), np.array(oa))
-
-    '''
-
-def train_generator(input_samples, out_channels, classes=None):
-    args = dict(rotation_range = 40, zoom_range = [0.6, 0.9], horizontal_flip = True, rescale = 1.0 / 255)
-    input_datagen = ImageDataGenerator(**args)
-    output_datagen = ImageDataGenerator(**args)
-#    input_samples = np.array([imread('input/data/lep1.jpg')])
-    output_samples = np.array([imread('output/data/lep1.png')])
-    seed = 1
-    input_datagen.fit(input_samples, augment=True, seed=seed)
-    output_datagen.fit(output_samples, augment=True, seed=seed)
-    input_gen = input_datagen.flow_from_directory(
-        'input/',
-        class_mode=None,
-        classes=classes,
-        target_size=(height, width),
-        seed=seed)
-    output_gen = output_datagen.flow_from_directory(
-        'output/',
-        class_mode=None,
-        classes=classes,
-        target_size=(height, width),
-        seed=seed)
-    alpha = out_channels - 1
-
-    def prep_out(out):
-        for o in out:
-            if out_channels > o.shape[3]:
-                shape = (o.shape[0], o.shape[1], o.shape[2], out_channels - o.shape[3])
-                result = np.concatenate((o, np.zeros(shape)), axis=3)
+    try:
+        while True:
+            if batch is None:
+                yield queue.get()
             else:
-                result = o[:, :, :, :out_channels]
-            for a in result:
-                for b in a:
-                    for c in b:
-                        c[alpha] = max(1.0 - c[0:alpha].sum(), 0.0)
-            yield result
-
-    return zip(input_gen, prep_out(output_gen))
-'''
+                ia, oa = [], []
+                for b in range(batch):
+                    (i, o) = queue.get()
+                    ia.append(i)
+                    oa.append(o)
+                yield (np.array(ia), np.array(oa))
+    except MemoryError:
+        sys.exit(2)
