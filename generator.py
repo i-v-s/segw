@@ -3,10 +3,11 @@ import sys
 from math import sin, cos, pi
 from os import listdir
 from skimage.io import imread
+from skimage.transform import rotate, rescale
 import random
 from queue import Queue
 from threading import Thread
-from scipy.ndimage.interpolation import rotate
+#from scipy.ndimage.interpolation import rotate, zoom
 from pympler import summary, muppy
 
 
@@ -53,7 +54,7 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
             yield int((ih - o[0]) / 2 - rdh), int((iw - o[1]) / 2 + rdw)
 
     def rotate_f(i, a):
-        img = rotate(i, a, reshape=True)
+        img = rotate(i, a, resize=True)
         img[img > 1.0] = 1.0
         img[img < 0.0] = 0.0
         return img
@@ -69,10 +70,14 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
                 results = []
                 metrics = []
                 msum = np.ones(out_channels)
-                for a in range(3):
+                for t in range(3):
                     n = random.randint(0, len(inputs) - 1)
                     i = inputs[n]
                     o = outputs[n]
+                    scale = 3.0 ** -random.random()
+                    if scale * i.shape[0] > size[0] and scale * i.shape[1] > size[1] and random.random() > 0.6:
+                        i = rescale(i, scale)
+                        o = rescale(o, scale)
                     i_shape = i.shape
                     a = -50 + 100.0 * random.random()
                     while not test_angle(a, i_shape, size):
