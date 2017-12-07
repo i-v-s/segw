@@ -1,25 +1,17 @@
-import numpy as np
-from skimage.io import imread
-from skimage.transform import resize
-from matplotlib import pyplot as plt
+from argparse import ArgumentParser
+import json
+import sys
 from keras import models
-from keras.optimizers import SGD
-from keras.callbacks import ModelCheckpoint, TensorBoard
-from threading import Thread
-from generator import train_generator
-import imageio
-
-modelName = '20'
-width = 256
-height = 256 #480
-
-input_samples = np.array(list(map(lambda n: imread('input/' + n)[: 448, : 512, :], ['data/lep1.jpg', 'data/lep2_s.png', 'data/lep4_s.png', 'data/wi3.png']))) / 255.0
-
+from keras.optimizers import SGD, Adagrad
+from keras.callbacks import ModelCheckpoint, TensorBoard, ReduceLROnPlateau
+from generator import train_generator_queue, shutdown_generator, load_samples
+from time import sleep, time
+from tensorflow.python.framework.errors import OpError
 
 def load_model(model_name):
-    with open('models/' + modelName + '.json') as model_file:
+    with open('models/' + model_name + '.json') as model_file:
         model = models.model_from_json(model_file.read())
-    optimizer = SGD(lr=0.00005, momentum=0.5, decay=0.0005, nesterov=False)
+    optimizer = SGD(lr=0.0015, momentum=0.95, decay=0.0005, nesterov=False)
     model.compile(loss="categorical_crossentropy", optimizer=optimizer, metrics=['accuracy'])
     print('Compiled: OK')
     try:
@@ -27,176 +19,100 @@ def load_model(model_name):
         print('Weights loaded')
     except OSError:
         pass
-    return model
+    return model, json.load(open('models/' + model_name + '_state.json'))
 
 
-running = True
-changed = False
-sample_results = []
+def check_memory():
+    free = psutil.virtual_memory().free
+    if free < 100000000:
+        raise MemoryError('Not enough memory')
 
 
-def handle_close():
-    global running
-    print("Terminating...")
-    running = False
-    thread.join()
+parser = ArgumentParser(description='Learning neural network')
+parser.add_argument('name', type=str, default='boe8_2x2_16-128', help='Name of network')
+parser.add_argument('-s', type=int, default=512, help='Height and width of the images')
+args = parser.parse_args()
+model_name = args.name
+size = (args.s, args.s)
+model, state = load_model(model_name)
+epoch = state.get('epoch', 1)
+sample_x = load_samples('validation/input')
+sample_y = load_samples('validation/output', inv_channel=3)
+# train_gen = train_generator(model.output_shape[3], (['wnp'], ['fill']), size, 8, every_flip=True, workers=2)
+train_queue = train_generator_queue(model.output_shape[3], (['wnp'], ['fill']), size, 10, every_flip=True)
+
+best_check = ModelCheckpoint(
+    filepath='models/' + model_name + '_best.hdf5',
+    verbose=1, save_best_only=True, monitor='loss')
+
+best_loss = state.get('best_loss', float('inf'))
+
+train_data = None
 
 
-def prep_plot():
-    #ims = []
-    #fig = plt.figure()
-    #fig.canvas.mpl_connect('close_event', handle_close)
-    #p = 0
-    #for n in range(0, 4):
-    #    a1 = fig.add_subplot(221 + p)
-    #    a1.axis('off')
-    #    ims.append(a1.imshow(np.zeros((height, width))))
-    #    p += 1
-    plt.axis('off')
-    im = plt.imshow(np.zeros((height * 2, width * 2)))
-    plt.ion()
-    plt.show()
-    return im
+def train_on_queue(queue, epochs=1, updates=50):
+    global epoch, train_data, best_loss
+    e, u, g = epochs, 0, 0
+    loss, acc = 0, 0
+    t = None
+    while True:
+        if u >= updates:
+            loss /= u
+            u = 0
+            validation_loss, validation_acc = model.test_on_batch(sample_x, sample_y)
+            print('Epoch %d completed. vl: %.3f, va: %.3f, tl: %.3f, gets: %d, time: %.1fs'
+                  % (epoch, validation_loss, validation_acc, loss, g, time() - t))
+            t = None
+            if validation_loss < best_loss:
+                print('Best loss!')
+                best_loss = validation_loss
+                model.save_weights('models/' + model_name + '_best.hdf5')
+            g = 0
+            epoch += 1
+            e -= 1
+            if e <= 0:
+                return
+        if not queue.empty():
+            train_data = queue.get()
+            g += 1
+        if train_data is None:
+            print('Waiting for data...')
+            sleep(5)
+        else:
+            if t is None:
+                t = time()
+            (l, a) = model.train_on_batch(train_data[0], train_data[1])
+            loss += l
+            acc += a
+            u += 1
 
 
-def calc_sample_results(model):
-    global changed
-    if changed:
-        return
-    sample_results.clear()
-    for n in range(0, 4):
-        outp = model.predict(input_samples[n: n + 1])
-        sample_results.append(outp[0][:, :, :3])
-    changed = True
-
-
-def train(model_name):
-    model = load_model(model_name)
-    train_gen = train_generator(model.output_shape[3], ["wnp"], (height, width), 64)
-    check_pointer = ModelCheckpoint(
-        filepath='models/' + modelName + '.hdf5',
-        verbose=1, save_best_only=True, monitor='loss')
-    tensor_board = TensorBoard(
-        log_dir='models/' + modelName + '/',
-        #write_images=True,
-        #write_grads=True,
-        #write_graph=True,
-        #histogram_freq=1
+def train(count):
+    global epoch
+    h = model.fit_generator(
+        train_gen,
+        steps_per_epoch=10,
+        verbose=2,
+        initial_epoch=epoch,
+        validation_data=(sample_x, sample_y),
+        epochs=epoch + count,
+        callbacks=[best_check],
+        max_queue_size=10
     )
-    tensor_board.validation_data = input_samples
-    #check_pointer.
-    epoch = 0
-    epochs = 5
-    #while running:
-    for i, o in train_gen:
-        if not running:
-            break
-        calc_sample_results(model)
-        model.fit(
-            i, o,
-            epochs=epoch + epochs, initial_epoch=epoch,
-            callbacks=[check_pointer, tensor_board],
-            batch_size=4)
-        #model.fit_generator(
-        #    train_gen, steps_per_epoch=30,
-        #    epochs=epoch + epochs, initial_epoch=epoch, callbacks=[check_pointer])
-        epoch += epochs
+    epoch += count
+    return h
 
-
-im = prep_plot()
 
 try:
-    thread = Thread(target=train, args=(modelName,))
-    thread.start()
-    start = True
-    with imageio.get_writer('d:/video/gif/segw.gif', mode='I', fps=5) as writer:
-        while True:
-            if changed:
-                i1 = np.hstack((sample_results[0], sample_results[1]))
-                i2 = np.hstack((sample_results[2], sample_results[3]))
-                image = np.vstack((i1, i2))[:, :, :3]
-
-                im.set_data(image)
-                if start:
-                    writer.append_data(np.zeros(image.shape))
-                    start = False
-
-                writer.append_data(image)
-                #for n in range(0, 4):
-                #    ims[n].set_data(sample_results[n])
-                plt.draw()
-                changed = False
-            plt.pause(1)
-except KeyboardInterrupt:
-    print("Terminating...")
-    running = False
-    thread.join()
-
-
-'''
-im = plt.imshow(np.zeros((height, width)))
-plt.ion()
-plt.show()
-
-for i, o in train_gen:
-    im.set_data(np.hstack((i[0], o[0][:, :, :3])))
-    plt.draw()
-    plt.pause(0.01)
-'''
-
-'''
-input = []
-output = []
-
-def load_pair(input_name, output_name):
-    input_img = imread('input/' + input_name)
-    output_img = imread('output/' + output_name)
-
-    for a in output_img:
-        for b in a:
-            b[3] = 255 - b[3]
-
-    input.append(input_img)
-    input.append(np.flip(input_img, 1))
-    output.append(output_img)
-    output.append(np.flip(output_img, 1))
-
-load_pair('lep1.jpg', 'lep1.png')
-load_pair('lep2_s.png', 'lep2_s.png')
-load_pair('lep4_s.png', 'lep4_s.png')
-load_pair('wi3.png', 'wi3.png')
-
-input = np.array(input) / 256.0
-output = np.array(output) / 256.0
-
-
-ims = []
-
-fig = plt.figure()
-p = 0
-for n in range(0, 4):
-    a1 = fig.add_subplot(221 + p)
-    a1.axis('off')
-    ims.append(a1.imshow(np.zeros((453, 600))))
-    #ims.append()
-    p += 1
-
-plt.ion()
-plt.show()
-
-
-for t in range(0, 10):
-
-    for n in range(0, 4):
-        outp = model.predict(input[n * 2 : n * 2 + 1])
-        ims[n].set_data(outp[0][:, :, :3])
-        #ims[n].draw()
-
-    #plt.draw()
-    plt.pause(0.0001)
-    fig.canvas.draw()
-
-    history = model.fit(input, output, epochs=10, batch_size=4)
-    model.save_weights('models/' + modelName + '.hdf5')
-
-'''
+    while True:
+        train_on_queue(train_queue, epochs=5)
+        #h = train(1)
+        state.update({'epoch': epoch, 'best_loss': best_loss})
+        model.save_weights('models/' + model_name + '.hdf5')
+        with open('models/' + model_name + '_state.json', 'w') as outfile:
+            outfile.write(json.dumps(state, indent=2))
+except Exception as e: # KeyboardInterrupt or MemoryError or OpError:
+    print('Exception: ', e.message)
+    print('Terminating...')
+    shutdown_generator()
+    sys.exit(1)
