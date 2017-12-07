@@ -175,3 +175,10 @@ def inverse_channel(image, channel):
     if image.shape[2] > channel + 1:
         result.append(image[:, :, channel + 1:])
     return np.concatenate(result, 2)
+
+
+def load_samples(folder, inv_channel=None):
+    result = [imread(join(folder, f)) for f in listdir(folder) if f.endswith('.png') or f.endswith('.jpg') or f.endswith('.jpeg')]
+    if inv_channel is not None:
+        result = list(map(lambda i: inverse_channel(i, inv_channel), result))
+    return np.array(result) / 255.0
