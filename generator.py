@@ -20,7 +20,7 @@ def shutdown_generator():
     shutdown = True
 
 
-def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
+def train_generator_queue(out_channels, classes, size, batch_size=None, dump_mem=False, every_flip=False, workers=1):
 
     def load_classes(folder, class_list):
         fns = []
@@ -92,7 +92,7 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
                 else:
                     continue
 
-    def generate_loop(q, dump_mem):
+    def generate_loop(dump_mem):
         try:
             #raise MemoryError()
             class_tuple = classes if isinstance(classes, tuple) else (classes, classes)
@@ -108,7 +108,7 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
                     n = random.randint(0, len(inputs) - 1)
                     i = inputs[n]
                     o = outputs[n]
-                    scale = 3.0 ** (0.3 - random.random())
+                    scale = 3.0 ** (0.4 - random.random())
                     if scale * i.shape[0] > size[0] and scale * i.shape[1] > size[1] and random.random() > 0.5:
                         i = rescale(i, scale)
                         o = rescale(o, scale)
@@ -123,7 +123,7 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
                         x, y = p[1], p[0]
                         ip = i[y:y + size[0], x:x + size[1], :]
                         op = o[y:y + size[0], x:x + size[1], :]
-                        if random.randint(0, 10) > 5:
+                        if not every_flip and random.randint(0, 10) > 5:
                             ip = np.flip(ip, 1)
                             op = np.flip(op, 1)
                         m = np.sum(op, axis=(0, 1))
@@ -131,10 +131,14 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
                         metrics.append((len(results), m))
                         results.append((ip, op))
                 metrics = sorted(metrics, key=lambda m: -np.sum((m[1] / msum)[:out_channels - 1]))
-                metrics = metrics[: int(len(metrics) / 2)]
+                metrics = metrics[: int(len(metrics) * 0.75)]
                 random.shuffle(metrics)
                 for a in metrics:
-                    put(q, results[a[0]])
+                    r = results[a[0]]
+                    yield r
+                    if every_flip:
+                        yield np.flip(r[0], 1), np.flip(r[1], 1)
+
                 if dump_mem:
                     summary.print_(summary.summarize(muppy.get_objects()))
         except MemoryError:
@@ -142,21 +146,33 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
             _thread.interrupt_main()
             #sys.exit(2)
 
-    queue = Queue(maxsize=50)
-    thread = Thread(target=generate_loop, args=(queue, dump_mem))
-    thread.start()
+    def generate_batch_thread(q, dump_mem):
+        if batch_size is None:
+            for r in generate_loop(dump_mem=dump_mem):
+                put(q, r)
+        else:
+            bi = []
+            bo = []
+            for i, o in generate_loop(dump_mem=dump_mem):
+                bi.append(i)
+                bo.append(o)
+                if len(bi) >= batch_size:
+                    put(q, (np.array(bi), np.array(bo)))
+                bi.clear()
+                bo.clear()
 
+    queue = Queue(maxsize=50 if batch_size is None else int(50 / batch_size))
+    for w in range(workers):
+        thread = Thread(target=generate_batch_thread, args=(queue, dump_mem))
+        thread.start()
+    return queue
+
+
+def train_generator(*args, **kwargs):
+    queue = train_generator_queue(*args, **kwargs)
     try:
         while True:
-            if batch is None:
-                yield queue.get()
-            else:
-                ia, oa = [], []
-                for b in range(batch):
-                    (i, o) = queue.get()
-                    ia.append(i)
-                    oa.append(o)
-                yield (np.array(ia), np.array(oa))
+            yield queue.get()
     except MemoryError:
         print('Memory error...')
         _thread.interrupt_main()
