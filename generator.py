@@ -2,6 +2,7 @@ import numpy as np
 import sys
 from math import sin, cos, pi
 from os import listdir
+from os.path import join
 from skimage.io import imread
 from skimage.transform import rotate, rescale
 import random
@@ -9,6 +10,7 @@ from queue import Queue
 from threading import Thread
 #from scipy.ndimage.interpolation import rotate, zoom
 from pympler import summary, muppy
+import _thread
 
 
 def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
@@ -16,7 +18,7 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
     def load_classes(folder, class_list):
         fns = []
         for c in class_list:
-            fns += [c + '/' + f for f in listdir(folder + c) if f.endswith('.png') or f.endswith('.jpg') or f.endswith('.jpeg')]
+            fns += [join(c, f) for f in listdir(join(folder, c)) if f.endswith('.png') or f.endswith('.jpg') or f.endswith('.jpeg')]
 
         def load(fn):
             img = imread(folder + fn) / 255.0
@@ -36,7 +38,7 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
         acs, asn = abs(cs), abs(sn)
         rh = i[0] - o[0] * acs - o[1] * asn  # moving range
         rw = i[1] - o[1] * acs - o[0] * asn
-        return rh > 0 and rw > 0
+        return rh >= 0 and rw >= 0
 
     def gen_pos(a, i, o, count): # angle, (height, width) of input, (height, width) of output
         a *= -pi / 180
@@ -61,6 +63,7 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
 
     def generate_loop(q, dump_mem):
         try:
+            #raise MemoryError()
             class_tuple = classes if isinstance(classes, tuple) else (classes, classes)
             inputs = load_classes('input/', class_tuple[0])
             outputs = list(map(prep_out, load_classes('output/', class_tuple[1])))
@@ -105,7 +108,9 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
                 if dump_mem:
                     summary.print_(summary.summarize(muppy.get_objects()))
         except MemoryError:
-            sys.exit(2)
+            print('Memory error...')
+            _thread.interrupt_main()
+            #sys.exit(2)
 
     queue = Queue(maxsize=50)
     thread = Thread(target=generate_loop, args=(queue, dump_mem))
@@ -123,4 +128,20 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
                     oa.append(o)
                 yield (np.array(ia), np.array(oa))
     except MemoryError:
+        print('Memory error...')
+        _thread.interrupt_main()
         sys.exit(2)
+
+
+def inverse_channel(image, channel):
+    result = []
+    if channel > 0:
+        result.append(image[:, :, :channel])
+    c = image[:, :, channel:channel + 1]
+    mx = np.max(c)
+    #if mx == 0:
+    #    if c.dtype == fl
+    result.append(mx - c)
+    if image.shape[2] > channel + 1:
+        result.append(image[:, :, channel + 1:])
+    return np.concatenate(result, 2)
