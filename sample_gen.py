@@ -1,7 +1,7 @@
 import numpy as np
 from skimage.io import imsave
 from argparse import ArgumentParser
-from generator import train_generator, inverse_channel
+from generator import train_generator, inverse_channel, shutdown_generator
 from os import mkdir
 from os.path import isdir, isfile, abspath, join
 
@@ -25,7 +25,7 @@ mkd(input_folder)
 mkd(output_folder)
 input_classes = args.i.split(',')
 output_classes = args.o.split(',')
-n = 0
+n = 1
 for i, o in train_generator(4, (input_classes, output_classes), (args.s, args.s)):
     while True:
         name = "%04d.png" % (n,)
@@ -33,8 +33,10 @@ for i, o in train_generator(4, (input_classes, output_classes), (args.s, args.s)
             n += 1
         else:
             break
+    if n > args.count:
+        break
     imsave(join(input_folder, name), i)
     imsave(join(output_folder, name), inverse_channel(o, 3))
     n += 1
-    if n >= args.count:
-        break
+print('Terminating...')
+shutdown_generator()

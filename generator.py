@@ -6,11 +6,18 @@ from os.path import join
 from skimage.io import imread
 from skimage.transform import rotate, rescale
 import random
-from queue import Queue
+from queue import Queue, Full
 from threading import Thread
 #from scipy.ndimage.interpolation import rotate, zoom
 from pympler import summary, muppy
 import _thread
+
+shutdown = False
+
+
+def shutdown_generator():
+    global shutdown
+    shutdown = True
 
 
 def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
@@ -41,6 +48,14 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
         return rh >= 0 and rw >= 0
 
     def gen_pos(a, i, o, count): # angle, (height, width) of input, (height, width) of output
+        results = []
+
+        def test_pos(p):
+            for r in results:
+                if abs(r[0] - p[0]) < o[0] * 0.8 and abs(r[1] - p[1]) < o[1] * 0.8:
+                    return False
+            return True
+
         a *= -pi / 180
         cs, sn = cos(a), sin(a)
         acs, asn = abs(cs), abs(sn)
@@ -48,18 +63,34 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
         rw = i[1] - o[1] * acs - o[0] * asn
         ih = i[0] * acs + i[1] * asn  # rotated input size
         iw = i[1] * acs + i[0] * asn
-        for c in range(count):
+        for c in range(count * 2):
             dh = rh * (random.random() - 0.5)  # select offset
             dw = rw * (random.random() - 0.5)
             rdh = cs * dh - sn * dw  # rotated offset
             rdw = cs * dw + sn * dh
-            yield int((ih - o[0]) / 2 - rdh), int((iw - o[1]) / 2 + rdw)
+            r = (int((ih - o[0]) / 2 - rdh), int((iw - o[1]) / 2 + rdw))
+            if test_pos(r):
+                results.append(r)
+                yield r
+                if len(results) > count:
+                    break
 
     def rotate_f(i, a):
         img = rotate(i, a, resize=True)
         img[img > 1.0] = 1.0
         img[img < 0.0] = 0.0
         return img
+
+    def put(q, v):
+        while True:
+            try:
+                q.put(v, timeout=1)
+                return
+            except Full:
+                if shutdown:
+                    sys.exit(0)
+                else:
+                    continue
 
     def generate_loop(q, dump_mem):
         try:
@@ -69,7 +100,7 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
             outputs = list(map(prep_out, load_classes('output/', class_tuple[1])))
             random.seed(1)
             area = size[0] * size[1]
-            while True:
+            while not shutdown:
                 results = []
                 metrics = []
                 msum = np.ones(out_channels)
@@ -77,8 +108,8 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
                     n = random.randint(0, len(inputs) - 1)
                     i = inputs[n]
                     o = outputs[n]
-                    scale = 3.0 ** -random.random()
-                    if scale * i.shape[0] > size[0] and scale * i.shape[1] > size[1] and random.random() > 0.6:
+                    scale = 3.0 ** (0.3 - random.random())
+                    if scale * i.shape[0] > size[0] and scale * i.shape[1] > size[1] and random.random() > 0.5:
                         i = rescale(i, scale)
                         o = rescale(o, scale)
                     i_shape = i.shape
@@ -103,8 +134,7 @@ def train_generator(out_channels, classes, size, batch=None, dump_mem=False):
                 metrics = metrics[: int(len(metrics) / 2)]
                 random.shuffle(metrics)
                 for a in metrics:
-                    q.put(results[a[0]])
-
+                    put(q, results[a[0]])
                 if dump_mem:
                     summary.print_(summary.summarize(muppy.get_objects()))
         except MemoryError:
