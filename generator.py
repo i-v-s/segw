@@ -158,8 +158,8 @@ def train_generator_queue(out_channels, classes, size, batch_size=None, dump_mem
                 bo.append(o)
                 if len(bi) >= batch_size:
                     put(q, (np.array(bi), np.array(bo)))
-                bi.clear()
-                bo.clear()
+                    bi.clear()
+                    bo.clear()
 
     queue = Queue(maxsize=50 if batch_size is None else int(50 / batch_size))
     for w in range(workers):
