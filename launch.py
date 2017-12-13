@@ -3,12 +3,14 @@ import subprocess
 from datetime import datetime
 
 #args = sys.argv[1:]
-args = ['C:/Python36-64/python', '-u', 'learn.py', 'boe8_2x2_16-128']
+model_name = 'boe9_3x2_16-256' # 'boe8_2x2_16-128'
+args = ['C:/Python36-64/python', '-u', 'learn.py', model_name]
+
 
 def write(string):
-    with open('launch.txt', 'a') as log:
+    with open('launch_{0}.txt'.format(model_name), 'a') as log:
         out = str(datetime.now()) + ' ' + string.strip()
-        log.write(out)
+        log.write(out + '\n')
         print(out)
 
 
@@ -26,4 +28,4 @@ try:
         write('Process terminated with exit code ' + str(p.returncode))
 except KeyboardInterrupt:
     write('Launcher terminating...')
-    p.send_signal(subprocess.signal.SIGINT)
+    p.send_signal(subprocess.signal.CTRL_C_EVENT)

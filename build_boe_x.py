@@ -10,9 +10,13 @@ def build_model(base=16, conv_depth=2, deconv_depth=2, depth=6, max_filters=128)
     b = base
     convolutions = []
     for n in range(depth):
-        convolution = MaxPooling2D(name='max2d' + '_' + str(n))(convolution) if n > 0 else input_layer
+        convolution = MaxPooling2D(name='max2d_' + str(n))(convolution) if n > 0 else input_layer
         for c in range(conv_depth):
-            convolution = Conv2D(min(b, max_filters), 3, padding='same', activation='relu', name='conv2d' + '_' + str(n) + '_' + str(c))(convolution)
+            convolution = Conv2D(
+                min(b, max_filters), 3,
+                padding='same', activation='relu',
+                name='conv2d_' + str(n) + '_' + str(c)
+            )(convolution)
         convolutions.append(convolution)
         b *= 2
     b /= 2
@@ -31,7 +35,13 @@ def create_model(base=16, conv_depth=2, deconv_depth=2, depth=6, max_filters=128
     model_name = 'boe' + str(depth) + '_' + str(conv_depth) + 'x' + str(deconv_depth)\
                  + '_' + str(base) + '-' + str(max_filters)
     print('Building model ' + model_name)
-    model = build_model(base=base, conv_depth=conv_depth, deconv_depth=deconv_depth, depth=depth)
+    model = build_model(
+        base=base,
+        conv_depth=conv_depth,
+        deconv_depth=deconv_depth,
+        depth=depth,
+        max_filters=max_filters
+    )
     with open('models/' + model_name + '.json', 'w') as outfile:
         outfile.write(json.dumps(json.loads(model.to_json()), indent=2))
     with open('models/' + model_name + '_state.json', 'w') as outfile:
@@ -42,5 +52,5 @@ def create_model(base=16, conv_depth=2, deconv_depth=2, depth=6, max_filters=128
     return model
 
 
-result = create_model(base=16, depth=8)
+result = create_model(base=16, conv_depth=3, deconv_depth=2, depth=9, max_filters=256)
 result.summary()
